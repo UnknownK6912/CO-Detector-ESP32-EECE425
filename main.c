@@ -14,7 +14,12 @@
 #define GREEN_LED GPIO_NUM
 #define BUTTON_GPIO GIO_NUM
 #define SENSOR_GPIO GPIO_NUM
-#define DISABLE_DURATION_MS 
+#define DISABLE_DURATION_MS 3600000
+
+#define ADC_CHANNEL ADC1_CHANNEL_0 // GPIO 36
+#define ADC_WIDTH ADC_WIDTH_BIT_12 // 12-bit ADC
+#define ADC_ATTEN ADC_ATTEN_DB_11  // Attenuation for 0-3.3V range
+#define DEFAULT_VREF 1100          // Default reference voltage in mV
 
 static TickType_t next = 0;
 
@@ -38,6 +43,8 @@ void enter_reset_mode() {  // sleep function, triggered by button press
     // enable timer wake-up source
     esp_sleep_enable_timer_wakeup(DISABLE_DURATION_MS * 1000000);  // convert seconds to microseconds
 
+    // add code to disable wifi appropriately
+
     printf("Entering deep sleep for %d seconds or until button press.\n", SLEEP_DURATION_SEC);
     esp_deep_sleep_start();
 }
@@ -60,12 +67,12 @@ void init_hw() {
     gpio_install_isr_service(0);
     gpio_isr_handler_add(BUTTON_GPIO, button_isr_handler, NULL);
 
+    // initializing ADC channel 1
+    adc1_config_width(ADC_WIDTH);
+    adc1_config_channel_atten(ADC_CHANNEL, ADC_ATTEN);
+
 }
 
-
-// the sensor requires a heating cycle before usage
-// 5V for 60s and 1.4V for 90s
-// switching will be done using an external mosfet
 void mq7_heating_cycle() {
 
 
