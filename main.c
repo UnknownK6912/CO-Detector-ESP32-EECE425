@@ -73,7 +73,7 @@ void init_hw() {
 
 }
 
-float mq7_read() {
+float mq7_read_update() {
 
     // initialization
     esp_adc_cal_characteristics_t adc_chars;
@@ -94,7 +94,58 @@ float mq7_read() {
     float resistance_ratio = RS / RO;
     float ppm = 100.0 * pow(resistance_ratio, -1.4);  // conversion formula
 
+    update_led(ppm);
+
     return ppm;
+
+}
+
+void update_led(ppm) {
+
+    if (ppm > 100) {
+        // enable Red LED, disable all others
+        gpio_pad_select_gpio(RED_LED);
+        gpio_set_level(RED_LED, 1);
+
+        gpio_pad_select_gpio(YELLOW_LED);
+        gpio_set_level(YELLOW_LED, 0);
+
+        gpio_pad_select_gpio(GREEN_LED);
+        gpio_set_level(GREEN_LED, 0);
+    }
+    else if ((ppm <= 100) & (ppm > 50)) {
+        // enable Yellow LED, disable all others
+        gpio_pad_select_gpio(RED_LED);
+        gpio_set_level(RED_LED, 0);
+
+        gpio_pad_select_gpio(YELLOW_LED);
+        gpio_set_level(YELLOW_LED, 1);
+
+        gpio_pad_select_gpio(GREEN_LED);
+        gpio_set_level(GREEN_LED, 0);
+    }
+    else if (ppm <= 50) {
+        // enable Green LED, disable all others
+        gpio_pad_select_gpio(RED_LED);
+        gpio_set_level(RED_LED, 0);
+
+        gpio_pad_select_gpio(YELLOW_LED);
+        gpio_set_level(YELLOW_LED, 0);
+
+        gpio_pad_select_gpio(GREEN_LED);
+        gpio_set_level(GREEN_LED, 1);
+    }
+    else {
+        // disable all LEDs (edge case)
+        gpio_pad_select_gpio(RED_LED);
+        gpio_set_level(RED_LED, 0);
+
+        gpio_pad_select_gpio(YELLOW_LED);
+        gpio_set_level(YELLOW_LED, 0);
+
+        gpio_pad_select_gpio(GREEN_LED);
+        gpio_set_level(GREEN_LED, 0);
+    }
 
 }
 
@@ -112,6 +163,8 @@ void app_main() {
     }
 
     init_hw();
-    mq7_read();
+    vTaskDelay(pdMS_TO_TICKS(15000));
+    mq7_read_update();
+    
 
 }
