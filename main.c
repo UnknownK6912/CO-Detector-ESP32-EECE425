@@ -45,7 +45,7 @@ void enter_reset_mode() {  // sleep function, triggered by button press
 
     // add code to disable wifi appropriately
 
-    printf("Entering deep sleep for %d seconds or until button press.\n", SLEEP_DURATION_SEC);
+    printf("Entering deep sleep for %d seconds or until button press.\n", DISABLE_DURATION_MS);
     esp_deep_sleep_start();
 }
 
@@ -73,8 +73,28 @@ void init_hw() {
 
 }
 
-void mq7_heating_cycle() {
+float mq7_read() {
 
+    // initialization
+    esp_adc_cal_characteristics_t adc_chars;
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN, ADC_WIDTH, DEFAULT_VREF, &adc_chars);
+
+    // get the raw voltage reading, will be converted to get PPM
+    int raw_adc_value = adc1_get_raw(ADC_CHANNEL);
+    uint32_t voltage = esp_adc_cal_raw_to_voltage(raw_adc_value, &adc_chars);
+
+    const float VC = 5.0;   // sensor input voltage
+    const float RL = 10.0;  // load resistor (in kOhms)
+    const float RO = 10.0;  // sensor resistance in clean air (also in kOhms)
+
+    // calculate Rs (sensor resistance)
+    float RS = ((VC / (voltage / 1000.0)) - 1) * RL;
+
+    // conversion based on MQ-7 Datasheet (linked in the report/final submission)
+    float resistance_ratio = RS / RO;
+    float ppm = 100.0 * pow(resistance_ratio, -1.4);  // conversion formula
+
+    return ppm;
 
 }
 
@@ -92,5 +112,6 @@ void app_main() {
     }
 
     init_hw();
+    mq7_read();
 
 }
