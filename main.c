@@ -163,8 +163,12 @@ void app_main() {
     }
 
     init_hw();
+    while(1) {
+
     vTaskDelay(pdMS_TO_TICKS(15000));
     mq7_read_update();
+
+    }
     
 
 }
