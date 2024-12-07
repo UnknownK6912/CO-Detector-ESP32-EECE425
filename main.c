@@ -15,6 +15,7 @@
 #define BUTTON_GPIO GIO_NUM
 #define SENSOR_GPIO GPIO_NUM
 #define DISABLE_DURATION_MS 1800000 // 30 minutes
+#define READ_DELAY_MS 15000 // 15 seconds
 
 #define ADC_CHANNEL ADC1_CHANNEL_0 // GPIO 36
 #define ADC_WIDTH ADC_WIDTH_BIT_12 // 12-bit ADC
@@ -165,7 +166,7 @@ void app_main() {
     init_hw();
     while(1) {
 
-    vTaskDelay(pdMS_TO_TICKS(15000));
+    vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS));
     mq7_read_update();
 
     }
