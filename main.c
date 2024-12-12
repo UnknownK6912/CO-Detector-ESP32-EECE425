@@ -5,8 +5,9 @@
 #include "driver/gpio.h"
 #include "rom/gpio.h"
 #include "esp_sleep.h"
-#include "driver/adc.h"
-#include "esp_adc_cal.h"
+#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_cali.h"
+#include "esp_adc/adc_cali_scheme.h"
 #include <math.h>
 
 #include "esp_wifi.h"
@@ -31,9 +32,9 @@
 #define DISABLE_DURATION_MS 1800000 // 30 minutes
 #define READ_DELAY_MS 15000
 
-#define ADC_CHANNEL ADC1_CHANNEL_4 // GPIO 32
+#define ADC_CHANNEL ADC_CHANNEL_4 // GPIO 32, ADC1 Channel 4 according to github documentation
 #define ADC_WIDTH ADC_WIDTH_BIT_12 // 12-bit ADC
-#define ADC_ATTEN ADC_ATTEN_DB_11  // Attenuation for 0-3.3V range
+#define ADC_ATTEN ADC_ATTEN_DB_12  // Attenuation for 0-3.3V range
 #define DEFAULT_VREF 1100          // Default reference voltage in mV
 
 #define EXAMPLE_ESP_WIFI_SSID "michaeltest" //replace with wifi ssid
@@ -41,6 +42,29 @@
 #define EXAMPLE_ESP_MAXIMUM_RETRY 5
 
 static const char *TAG = "espressif";
+
+static adc_oneshot_unit_handle_t adc_handle = NULL;
+static adc_cali_handle_t adc_cali_handle = NULL;
+
+static void configure_adc(void) {
+    // initializing ADC oneshot mode
+    adc_oneshot_unit_init_cfg_t init_config; 
+    init_config.unit_id = ADC_UNIT_1;
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
+
+    // configuring adc channel
+    adc_oneshot_chan_cfg_t channel_config;
+    channel_config.bitwidth = ADC_BITWIDTH_12;
+    channel_config.atten = ADC_ATTEN;
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_CHANNEL, &channel_config));
+
+    // initialize ADC calibration
+    adc_cali_line_fitting_config_t cali_config;
+    cali_config.unit_id = ADC_UNIT_1;
+    cali_config.atten = ADC_ATTEN;
+    cali_config.bitwidth = ADC_BITWIDTH_12;
+    ESP_ERROR_CHECK(adc_cali_create_scheme_line_fitting(&cali_config, &adc_cali_handle));
+}
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
@@ -160,7 +184,9 @@ void enter_reset_mode() {  // sleep function, triggered by button press
     // enable timer wake-up source
     esp_sleep_enable_timer_wakeup(DISABLE_DURATION_MS * 1000);  // convert ms to us
 
-    // add code to disable wifi appropriately
+    // disabling wifi before going to deep sleep mode
+    esp_wifi_stop();
+    esp_wifi_deinit();
 
     printf("Entering deep sleep for %d seconds or until button press.\n", DISABLE_DURATION_MS);
     esp_deep_sleep_start();
@@ -197,9 +223,11 @@ void init_hw() {
     gpio_install_isr_service(0);
     gpio_isr_handler_add(BUTTON_GPIO, button_isr_handler, NULL);
 
-    // initializing ADC channel 1
-    adc1_config_width(ADC_WIDTH);
-    adc1_config_channel_atten(ADC_CHANNEL, ADC_ATTEN);
+
+    // configure adc
+    configure_adc();
+    // start wifi (or re-start after deep sleep)
+    connect_wifi();
 
 }
 
@@ -216,7 +244,7 @@ void update_led(float ppm) {
         gpio_pad_select_gpio(GREEN_LED);
         gpio_set_level(GREEN_LED, 0);
     }
-    else if ((ppm <= 100) & (ppm > 50)) {
+    else if ((ppm <= 100) && (ppm > 50)) {
         // enable Yellow LED, disable all others
         gpio_pad_select_gpio(RED_LED);
         gpio_set_level(RED_LED, 0);
@@ -254,13 +282,12 @@ void update_led(float ppm) {
 
 float mq7_read_update() {
 
-    // initialization
-    esp_adc_cal_characteristics_t adc_chars;
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN, ADC_WIDTH, DEFAULT_VREF, &adc_chars);
+    int raw_adc_value;
 
-    // get the raw voltage reading, will be converted to get PPM
-    int raw_adc_value = adc1_get_raw(ADC_CHANNEL);
-    uint32_t voltage = esp_adc_cal_raw_to_voltage(raw_adc_value, &adc_chars);
+    ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, ADC_CHANNEL, &raw_adc_value));
+
+    uint32_t voltage;
+    ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc_cali_handle, raw_adc_value, &voltage));
 
     const float VC = 5.0;   // sensor input voltage
     const float RL = 10.0;  // load resistor (in kOhms)
@@ -296,8 +323,8 @@ void app_main() {
 
     while(1) {
 
-    vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS));
-    mq7_read_update();
+        vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS));
+        mq7_read_update();
 
     }
     
