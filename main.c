@@ -1,13 +1,10 @@
 #include <stdio.h>
-#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "rom/gpio.h"
 #include "esp_sleep.h"
-#include "esp_adc/adc_oneshot.h"
-#include "esp_adc/adc_cali.h"
-#include "esp_adc/adc_cali_scheme.h"
+#include "driver/adc.h"
 #include <math.h>
 
 #include "esp_wifi.h"
@@ -25,46 +22,47 @@
 #include <lwip/netdb.h>
 
 
-#define RED_LED GPIO_NUM_21
-#define YELLOW_LED GPIO_NUM_17
-#define GREEN_LED GPIO_NUM_16
-#define BUTTON_GPIO GPIO_NUM_19
+
+#define RED_LED GPIO_NUM_13
+#define YELLOW_LED GPIO_NUM_12
+#define GREEN_LED GPIO_NUM_14
+#define BUTTON_GPIO GPIO_NUM_26
 #define DISABLE_DURATION_MS 1800000 // 30 minutes
 #define READ_DELAY_MS 15000
 
-#define ADC_CHANNEL ADC_CHANNEL_4 // GPIO 32, ADC1 Channel 4 according to github documentation
+#define ADC_CHANNEL ADC1_CHANNEL_4 // GPIO 32, ADC1 Channel 4 according to github documentation
 #define ADC_WIDTH ADC_WIDTH_BIT_12 // 12-bit ADC
-#define ADC_ATTEN ADC_ATTEN_DB_12  // Attenuation for 0-3.3V range
+#define ADC_ATTEN ADC_ATTEN_DB_11  // Attenuation for 0-3.3V range
 #define DEFAULT_VREF 1100          // Default reference voltage in mV
 
-#define EXAMPLE_ESP_WIFI_SSID "michaeltest" //replace with wifi ssid
+#define EXAMPLE_ESP_WIFI_SSID "wifitest" //replace with wifi ssid
 #define EXAMPLE_ESP_WIFI_PASS "deez6912" // replace with passsword
 #define EXAMPLE_ESP_MAXIMUM_RETRY 5
 
-static const char *TAG = "espressif";
 
-static adc_oneshot_unit_handle_t adc_handle = NULL;
-static adc_cali_handle_t adc_cali_handle = NULL;
+#define VC 5.0       // Input voltage to the sensor (in volts)
+#define RL 10.0      // Load resistor (in kOhms)
+#define RO 10.0      // Sensor resistance in clean air (in kOhms)
+
+static const char *TAG = "espressif";
+static TickType_t next = 0;
+
+
+
+//----------ADC Config--------------------
+
+
 
 static void configure_adc(void) {
-    // initializing ADC oneshot mode
-    adc_oneshot_unit_init_cfg_t init_config; 
-    init_config.unit_id = ADC_UNIT_1;
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc_handle));
-
-    // configuring adc channel
-    adc_oneshot_chan_cfg_t channel_config;
-    channel_config.bitwidth = ADC_BITWIDTH_12;
-    channel_config.atten = ADC_ATTEN;
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle, ADC_CHANNEL, &channel_config));
-
-    // initialize ADC calibration
-    adc_cali_line_fitting_config_t cali_config;
-    cali_config.unit_id = ADC_UNIT_1;
-    cali_config.atten = ADC_ATTEN;
-    cali_config.bitwidth = ADC_BITWIDTH_12;
-    ESP_ERROR_CHECK(adc_cali_create_scheme_line_fitting(&cali_config, &adc_cali_handle));
+    adc1_config_width(ADC_WIDTH);
+    adc1_config_channel_atten(ADC_CHANNEL, ADC_ATTEN);
 }
+
+
+
+//----------WiFi Config and Functions--------------------
+
+
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
@@ -175,7 +173,11 @@ void connect_wifi(void)
     vEventGroupDelete(s_wifi_event_group);
 }
 
-static TickType_t next = 0;
+
+
+//----------Deep Sleep Function--------------------
+
+
 
 void enter_reset_mode() {  // sleep function, triggered by button press
     
@@ -185,12 +187,18 @@ void enter_reset_mode() {  // sleep function, triggered by button press
     esp_sleep_enable_timer_wakeup(DISABLE_DURATION_MS * 1000);  // convert ms to us
 
     // disabling wifi before going to deep sleep mode
-    esp_wifi_stop();
-    esp_wifi_deinit();
+    ESP_ERROR_CHECK(esp_wifi_stop());
+    ESP_ERROR_CHECK(esp_wifi_deinit());
 
     printf("Entering deep sleep for %d seconds or until button press.\n", DISABLE_DURATION_MS);
     esp_deep_sleep_start();
 }
+
+
+
+//----------Reset Button function--------------------
+
+
 
 void IRAM_ATTR button_isr_handler(void* arg) {
     TickType_t now = xTaskGetTickCountFromISR();
@@ -204,6 +212,8 @@ void IRAM_ATTR button_isr_handler(void* arg) {
         enter_reset_mode(); // esp32 goes to sleep until button pressed again or timer expiry
     }
 }
+
+//----------Initialize HW--------------------
 
 void init_hw() {
     gpio_pad_select_gpio(RED_LED);
@@ -226,15 +236,16 @@ void init_hw() {
 
     // configure adc
     configure_adc();
-    // start wifi (or re-start after deep sleep)
-    connect_wifi();
 
 }
+
+//----------Update LED Status based on PPM--------------------
 
 void update_led(float ppm) {
 
     if (ppm > 100) {
         // enable Red LED, disable all others
+        printf("Turning on RED_LED\n");
         gpio_pad_select_gpio(RED_LED);
         gpio_set_level(RED_LED, 1);
 
@@ -245,6 +256,7 @@ void update_led(float ppm) {
         gpio_set_level(GREEN_LED, 0);
     }
     else if ((ppm <= 100) && (ppm > 50)) {
+        printf("Turning on Yellow_LED\n");
         // enable Yellow LED, disable all others
         gpio_pad_select_gpio(RED_LED);
         gpio_set_level(RED_LED, 0);
@@ -256,6 +268,7 @@ void update_led(float ppm) {
         gpio_set_level(GREEN_LED, 0);
     }
     else if (ppm <= 50) {
+        printf("Turning on Green_LED\n");
         // enable Green LED, disable all others
         gpio_pad_select_gpio(RED_LED);
         gpio_set_level(RED_LED, 0);
@@ -280,35 +293,36 @@ void update_led(float ppm) {
 
 }
 
-float mq7_read_update() {
+//----------Read ADC values form MQ-7 Sensor, and calculate PPM--------------------
 
-    int raw_adc_value;
+float mq7_read_update(uint32_t adc_value) {
+    // raw ADC value to voltage
+    float voltage = (adc_value * VC) / 4095.0; // here we assume 12-bit resolution
 
-    ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, ADC_CHANNEL, &raw_adc_value));
+    // sensor resistance Rs
+    float RS = ((VC / voltage) - 1.0) * RL;
 
-    uint32_t voltage;
-    ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc_cali_handle, raw_adc_value, &voltage));
-
-    const float VC = 5.0;   // sensor input voltage
-    const float RL = 10.0;  // load resistor (in kOhms)
-    const float RO = 10.0;  // sensor resistance in clean air (also in kOhms)
-
-    // calculate Rs (sensor resistance)
-    float RS = ((VC / (voltage / 1000.0)) - 1) * RL;
-
-    // conversion based on MQ-7 Datasheet (linked in the report/final submission)
+    // converting to PPM
     float resistance_ratio = RS / RO;
-    float ppm = 100.0 * pow(resistance_ratio, -1.4);  // conversion formula
+    float ppm = 100.0 * pow(resistance_ratio, -1.4); // based on the mq-7 dataset
 
-    update_led(ppm);
+    //update_led(ppm);
 
     return ppm;
-
 }
 
-
+//----------Main function--------------------
 
 void app_main() {
+
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
@@ -319,14 +333,23 @@ void app_main() {
         printf("Normal boot or other wake-up cause.\n");
     }
 
+
     init_hw();
+    // start wifi (or re-start after deep sleep)
+    connect_wifi();
+    // start MQTT (re-start after deep sleep)
+    //mqtt_app_start();
 
     while(1) {
 
-        vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS));
-        mq7_read_update();
+
+        vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS)); // configurable delay for sensor readings
+        int adc_value = adc1_get_raw(ADC_CHANNEL);
+        float ppm = mq7_read_update(adc_value);
+        update_led(ppm);
+        printf("ADC Value: %d, CO Concentration: %.2f ppm\n", adc_value, ppm);
+        //publish_ppm_data(ppm); // send the PPM data using MQTT
 
     }
     
-
 }
