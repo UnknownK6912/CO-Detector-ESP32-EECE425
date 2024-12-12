@@ -45,7 +45,6 @@
 #define RO 10.0      // Sensor resistance in clean air (in kOhms)
 
 static const char *TAG = "espressif";
-static TickType_t next = 0;
 
 
 
@@ -180,7 +179,7 @@ void connect_wifi(void)
 
 
 void enter_reset_mode() {  // sleep function, triggered by button press
-    
+
     esp_sleep_enable_ext0_wakeup(BUTTON_GPIO, 0);  // wake when button is pressed again
 
     // enable timer wake-up source
@@ -200,15 +199,16 @@ void enter_reset_mode() {  // sleep function, triggered by button press
 
 
 
+static TickType_t next = 0;
+
 void IRAM_ATTR button_isr_handler(void* arg) {
     TickType_t now = xTaskGetTickCountFromISR();
     if (now > next) {
-        next = now + 200/portTICK_PERIOD_MS;
-        
+        next = now + 500/portTICK_PERIOD_MS;
         gpio_set_level(RED_LED, 0);
         gpio_set_level(YELLOW_LED, 0);
         gpio_set_level(GREEN_LED, 0);
-        
+
         enter_reset_mode(); // esp32 goes to sleep until button pressed again or timer expiry
     }
 }
@@ -306,8 +306,6 @@ float mq7_read_update(uint32_t adc_value) {
     float resistance_ratio = RS / RO;
     float ppm = 100.0 * pow(resistance_ratio, -1.4); // based on the mq-7 dataset
 
-    //update_led(ppm);
-
     return ppm;
 }
 
@@ -337,18 +335,14 @@ void app_main() {
     init_hw();
     // start wifi (or re-start after deep sleep)
     connect_wifi();
-    // start MQTT (re-start after deep sleep)
-    //mqtt_app_start();
 
     while(1) {
 
-
-        vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS)); // configurable delay for sensor readings
         int adc_value = adc1_get_raw(ADC_CHANNEL);
         float ppm = mq7_read_update(adc_value);
         update_led(ppm);
-        printf("ADC Value: %d, CO Concentration: %.2f ppm\n", adc_value, ppm);
-        //publish_ppm_data(ppm); // send the PPM data using MQTT
+        printf("CO Concentration: %.2f ppm\n", ppm);
+        vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS)); // configurable delay for sensor readings
 
     }
     
