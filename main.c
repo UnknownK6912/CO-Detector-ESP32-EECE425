@@ -21,14 +21,14 @@
 #include <lwip/api.h>
 #include <lwip/netdb.h>
 
-
+#include "esp_http_server.h"
 
 #define RED_LED GPIO_NUM_13
 #define YELLOW_LED GPIO_NUM_12
 #define GREEN_LED GPIO_NUM_14
 #define BUTTON_GPIO GPIO_NUM_26
 #define DISABLE_DURATION_MS 1800000 // 30 minutes
-#define READ_DELAY_MS 15000
+#define READ_DELAY_MS 1000
 
 #define ADC_CHANNEL ADC1_CHANNEL_4 // GPIO 32, ADC1 Channel 4 according to github documentation
 #define ADC_WIDTH ADC_WIDTH_BIT_12 // 12-bit ADC
@@ -46,6 +46,75 @@
 
 static const char *TAG = "espressif";
 
+static volatile float current_ppm = 0.0;
+
+
+
+//----------HTML file as char index-------
+
+char ppm_resp[] = "<!DOCTYPE html><html lang=\"en\"><head>"
+    "<meta charset=\"UTF-8\">"
+    "<title>CO Sensor Monitor</title>"
+    "<style>"
+    "body {"
+        "font-family: Arial, sans-serif;"
+        "display: flex;"
+        "justify-content: center;"
+        "align-items: center;"
+        "height: 100vh;"
+        "margin: 0;"
+        "background-color: #f0f0f0;"
+    "}"
+    "#monitor {"
+        "text-align: center;"
+        "padding: 20px;"
+        "border: 2px solid #333;"
+        "border-radius: 10px;"
+    "}"
+    "#ppm-display {"
+        "font-size: 2em;"
+        "margin-bottom: 10px;"
+    "}"
+    "#status-text {"
+        "font-size: 1.5em;"
+        "font-weight: bold;"
+    "}"
+    ".status-ok { color: green; }"
+    ".status-caution { color: orange; }"
+    ".status-danger { color: red; }"
+    "</style>"
+    "</head>"
+    "<body>"
+    "<div id=\"monitor\">"
+    "<div id=\"ppm-display\">0.00 PPM</div>"
+    "<div id=\"status-text\">No Data</div>"
+    "</div>"
+    "<script>"
+    "function updateStatus(ppm) {"
+        "const ppmDisplay = document.getElementById('ppm-display');"
+        "const statusText = document.getElementById('status-text');"
+        "ppmDisplay.textContent = `${ppm.toFixed(2)} PPM`;"
+        "if (ppm > 100) {"
+            "statusText.textContent = 'DANGER';"
+            "statusText.className = 'status-danger';"
+        "} else if (ppm > 50) {"
+            "statusText.textContent = 'CAUTION';"
+            "statusText.className = 'status-caution';"
+        "} else {"
+            "statusText.textContent = 'OK';"
+            "statusText.className = 'status-ok';"
+        "}"
+    "}"
+    "function fetchLatestData() {"
+        "fetch('/ppm')"
+        ".then(response => response.json())"
+        ".then(data => updateStatus(data.ppm))"
+        ".catch(error => console.error('Error:', error));"
+    "}"
+    "fetchLatestData();"
+    "setInterval(fetchLatestData, 15000);"
+    "</script>"
+    "</body></html>";
 
 
 //----------ADC Config--------------------
@@ -239,6 +308,62 @@ void init_hw() {
 
 }
 
+
+
+//-----HTTP Code------
+
+
+esp_err_t index_html_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, ppm_resp, strlen(ppm_resp));
+    return ESP_OK;
+}
+
+esp_err_t ppm_data_handler(httpd_req_t *req) {
+    char response[50];
+    // Use volatile global variable directly
+    snprintf(response, sizeof(response), "{\"ppm\":%.2f}", current_ppm);
+    
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, strlen(response));
+    return ESP_OK;
+}
+
+// Start web server function remains the same
+httpd_handle_t start_webserver(void) {
+    httpd_handle_t server = NULL;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.lru_purge_enable = true;
+
+    // Start the https server
+    ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
+    if (httpd_start(&server, &config) == ESP_OK) {
+        // URI handler for root path / serves index.html
+        httpd_uri_t index_uri = {
+            .uri       = "/",
+            .method    = HTTP_GET,
+            .handler   = index_html_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &index_uri);
+
+        // URI handler for /ppm endpoint
+        httpd_uri_t ppm_uri = {
+            .uri       = "/ppm",
+            .method    = HTTP_GET,
+            .handler   = ppm_data_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &ppm_uri);
+
+        return server;
+    }
+
+    ESP_LOGI(TAG, "Error starting server!");
+    return NULL;
+}
+
+
 //----------Update LED Status based on PPM--------------------
 
 void update_led(float ppm) {
@@ -336,12 +461,14 @@ void app_main() {
     // start wifi (or re-start after deep sleep)
     connect_wifi();
 
+    start_webserver();
+
     while(1) {
 
         int adc_value = adc1_get_raw(ADC_CHANNEL);
-        float ppm = mq7_read_update(adc_value);
-        update_led(ppm);
-        printf("CO Concentration: %.2f ppm\n", ppm);
+        current_ppm = mq7_read_update(adc_value);
+        update_led(current_ppm);
+        printf("CO Concentration: %.2f ppm\n", current_ppm);
         vTaskDelay(pdMS_TO_TICKS(READ_DELAY_MS)); // configurable delay for sensor readings
 
     }
