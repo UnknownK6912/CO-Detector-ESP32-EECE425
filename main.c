@@ -380,7 +380,7 @@ void update_led(float ppm) {
         gpio_pad_select_gpio(GREEN_LED);
         gpio_set_level(GREEN_LED, 0);
     }
-    else if ((ppm <= 100) && (ppm > 50)) {
+    else if (ppm > 50) {
         printf("Turning on Yellow_LED\n");
         // enable Yellow LED, disable all others
         gpio_pad_select_gpio(RED_LED);
@@ -392,7 +392,7 @@ void update_led(float ppm) {
         gpio_pad_select_gpio(GREEN_LED);
         gpio_set_level(GREEN_LED, 0);
     }
-    else if (ppm <= 50) {
+    else {
         printf("Turning on Green_LED\n");
         // enable Green LED, disable all others
         gpio_pad_select_gpio(RED_LED);
@@ -404,18 +404,6 @@ void update_led(float ppm) {
         gpio_pad_select_gpio(GREEN_LED);
         gpio_set_level(GREEN_LED, 1);
     }
-    else {
-        // disable all LEDs (edge case)
-        gpio_pad_select_gpio(RED_LED);
-        gpio_set_level(RED_LED, 0);
-
-        gpio_pad_select_gpio(YELLOW_LED);
-        gpio_set_level(YELLOW_LED, 0);
-
-        gpio_pad_select_gpio(GREEN_LED);
-        gpio_set_level(GREEN_LED, 0);
-    }
-
 }
 
 //----------Read ADC values form MQ-7 Sensor, and calculate PPM--------------------
